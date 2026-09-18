@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - finops.zapi-web.github.io
+  resources:
+  - idlescalers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - finops.zapi-web.github.io
+  resources:
+  - idlescalers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - finops.zapi-web.github.io
+  resources:
+  - idlescalers/status
+  verbs:
+  - get
+  - patch
+  - update

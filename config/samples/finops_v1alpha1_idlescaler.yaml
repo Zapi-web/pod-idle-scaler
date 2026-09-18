@@ -1,0 +1,9 @@
+apiVersion: finops.zapi-web.github.io/v1alpha1
+kind: IdleScaler
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: idlescaler-sample
+spec:
+  # TODO(user): Add fields here
