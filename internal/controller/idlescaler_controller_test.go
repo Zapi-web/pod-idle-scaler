@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1alpha1 "github.com/zapi-web/pod-idle-scaler/api/v1alpha1"
@@ -52,9 +53,21 @@ var _ = Describe("IdleScaler Controller", func() {
 				resource := &finopsv1alpha1.IdleScaler{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: resourceNamespace,
+						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: finopsv1alpha1.IdleScalerSpec{
+						ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+							Kind:       "Deployment",
+							Name:       "test-deployment",
+							APIVersion: "apps/v1",
+						},
+						Trigger: finopsv1alpha1.TriggerSpec{
+							Type: finopsv1alpha1.TriggerTypeHTTP,
+							HTTP: &finopsv1alpha1.HTTPTriggerSpec{
+								URL: "http://dummy-url.local",
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
