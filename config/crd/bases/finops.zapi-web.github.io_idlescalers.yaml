@@ -39,25 +39,247 @@ spec:
           spec:
             description: spec defines the desired state of IdleScaler
             properties:
-              foo:
-                description: foo is an example field of IdleScaler. Edit idlescaler_types.go
-                  to remove/update
+              idleTimeout:
+                default: 15m
+                description: Time before reduce
                 type: string
+              replicas:
+                default: 1
+                description: Replicas to scale up to when waking up
+                format: int32
+                minimum: 1
+                type: integer
+              scaleMinimum:
+                default: 0
+                description: Minimal scaling number
+                format: int32
+                minimum: 0
+                type: integer
+              scaleTargetRef:
+                description: Link on Deployment
+                properties:
+                  apiVersion:
+                    description: apiVersion is the API version of the referent
+                    type: string
+                  kind:
+                    description: 'kind is the kind of the referent; More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+                    type: string
+                  name:
+                    description: 'name is the name of the referent; More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+              trigger:
+                description: Gets Activity metric from Custom/External Metrics API
+                properties:
+                  http:
+                    description: HTTP trigger configuration
+                    properties:
+                      bodyPattern:
+                        description: BodyPattern is a regex pattern that response
+                          body must match to consider service active
+                        type: string
+                      expectedCode:
+                        default: 200
+                        description: ExpectedCode is the expected HTTP answer code
+                        format: int32
+                        maximum: 599
+                        minimum: 100
+                        type: integer
+                      headers:
+                        additionalProperties:
+                          type: string
+                        description: Headers include in the request
+                        type: object
+                      method:
+                        default: GET
+                        description: Method for HTTP request
+                        enum:
+                        - GET
+                        - POST
+                        - HEAD
+                        type: string
+                      timeout:
+                        default: 5s
+                        description: Timeout for HTTP request
+                        type: string
+                      tlsConfig:
+                        description: TLSconfig provides TLS connection settings
+                        properties:
+                          caSecretRef:
+                            description: CASecretRef references a Secret containing
+                              the CA bundle
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          insecureSkipVerify:
+                            description: InsecureSkipVerify disable TLS certificate
+                              verification
+                            type: boolean
+                        type: object
+                      tokenSecretRef:
+                        description: TokenSecretRef references a Secret key containing
+                          an auth token for headers
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      url:
+                        description: URL endpoint to probe
+                        pattern: ^https?://.*
+                        type: string
+                    required:
+                    - url
+                    type: object
+                  promql:
+                    description: PromQL trigger configuration
+                    properties:
+                      query:
+                        description: Query is the PromQL code to execute
+                        type: string
+                      threshold:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        default: "0"
+                        description: |-
+                          Threshold defines the value above which the workload equals active state
+                          Default to 0 (metric value > 0 resets the timer)
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      timeout:
+                        default: 5s
+                        description: Timeout for the query execution
+                        type: string
+                      tlsConfig:
+                        description: TLSconfig provides TLS connection settings
+                        properties:
+                          caSecretRef:
+                            description: CASecretRef references a Secret containing
+                              the CA bundle
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          insecureSkipVerify:
+                            description: InsecureSkipVerify disable TLS certificate
+                              verification
+                            type: boolean
+                        type: object
+                      tokenSecretRef:
+                        description: TokenSecretRef references a Secret key for Prometheus
+                          Bearer auth
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      url:
+                        description: URL of the Prometheus/VictoriaMetrics etc.
+                        pattern: ^https?://.*
+                        type: string
+                    required:
+                    - query
+                    - url
+                    type: object
+                  type:
+                    description: Type defines the trigger mechanism
+                    enum:
+                    - HTTP
+                    - PromQL
+                    type: string
+                required:
+                - type
+                type: object
+                x-kubernetes-validations:
+                - message: trigger configuration must match the specified type and
+                    only one config can be provided
+                  rule: (self.type == 'HTTP' && has(self.http) && !has(self.promql))
+                    || (self.type == 'PromQL' && has(self.promql) && !has(self.http))
+            required:
+            - scaleTargetRef
+            - trigger
             type: object
           status:
             description: status defines the observed state of IdleScaler
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the IdleScaler resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: The status of each condition is one of True, False, or
+                  Unknown.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,6 +338,22 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastActivityTime:
+                description: Last Activity Time
+                format: date-time
+                type: string
+              phase:
+                description: Phase provides a summary of the scaller state
+                enum:
+                - Active
+                - Idling
+                - Sleeping
+                - Error
+                type: string
+              readyReplicas:
+                description: Number of ready replicas
+                format: int32
+                type: integer
             type: object
         required:
         - spec
