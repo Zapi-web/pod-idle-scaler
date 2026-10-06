@@ -38,24 +38,24 @@ const (
 
 // IdleScalerSpec defines the desired state of IdleScaler
 type IdleScalerSpec struct {
-	// Replicas to scale up to when waking up
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=1
-	// +optional
-	Replicas *int32 `json:"replicas,omitempty"`
-
 	// Time before reduce
 	// +kubebuilder:default="15m"
 	// +optional
 	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
 
+	// Check time
+	// +kubebuilder:default="1m"
+	// +optional
+	CheckTimeout *metav1.Duration `json:"checkTimeout,omitempty"`
+
 	// Link on Deployment
+	// +kubebuilder:validation:XValidation:rule="self.kind == 'Deployment'",message="only Deployment is supported"
 	// +required
 	ScaleTargetRef autoscalingv2.CrossVersionObjectReference `json:"scaleTargetRef"`
 
 	// Minimal scaling number
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:default=0
+	// +kubebuilder:default=1
 	ScaleMinimum *int32 `json:"scaleMinimum,omitempty"`
 
 	// Gets Activity metric from Custom/External Metrics API
@@ -70,10 +70,6 @@ type IdleScalerStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// Number of ready replicas
-	// +optional
-	ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
 
 	// Phase provides a summary of the scaller state
 	// +optional
