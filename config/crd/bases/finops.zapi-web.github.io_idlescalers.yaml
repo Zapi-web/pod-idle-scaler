@@ -39,18 +39,16 @@ spec:
           spec:
             description: spec defines the desired state of IdleScaler
             properties:
+              checkTimeout:
+                default: 1m
+                description: Check time
+                type: string
               idleTimeout:
                 default: 15m
                 description: Time before reduce
                 type: string
-              replicas:
-                default: 1
-                description: Replicas to scale up to when waking up
-                format: int32
-                minimum: 1
-                type: integer
               scaleMinimum:
-                default: 0
+                default: 1
                 description: Minimal scaling number
                 format: int32
                 minimum: 0
@@ -71,6 +69,9 @@ spec:
                 - kind
                 - name
                 type: object
+                x-kubernetes-validations:
+                - message: only Deployment is supported
+                  rule: self.kind == 'Deployment'
               trigger:
                 description: Gets Activity metric from Custom/External Metrics API
                 properties:
@@ -350,10 +351,6 @@ spec:
                 - Sleeping
                 - Error
                 type: string
-              readyReplicas:
-                description: Number of ready replicas
-                format: int32
-                type: integer
             type: object
         required:
         - spec
