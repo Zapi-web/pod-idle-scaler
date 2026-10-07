@@ -37,6 +37,7 @@ import (
 
 	finopsv1alpha1 "github.com/zapi-web/pod-idle-scaler/api/v1alpha1"
 	"github.com/zapi-web/pod-idle-scaler/internal/controller"
+	"github.com/zapi-web/pod-idle-scaler/internal/httppool"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -183,8 +184,9 @@ func main() {
 	}
 
 	if err := (&controller.IdleScalerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		ClientPool: httppool.NewClientPool(mgr.GetClient()),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "idlescaler")
 		os.Exit(1)
