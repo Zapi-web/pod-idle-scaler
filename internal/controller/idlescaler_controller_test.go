@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"net/http"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,6 +32,15 @@ import (
 
 	finopsv1alpha1 "github.com/zapi-web/pod-idle-scaler/api/v1alpha1"
 )
+
+type mockPool struct{}
+
+func (m *mockPool) GetClient(_ context.Context, _ string, _ *finopsv1alpha1.TLSConfig, _ *metav1.Duration) (*http.Client, error) {
+	return &http.Client{Timeout: time.Second}, nil
+}
+
+func (m *mockPool) InvalidateNamespace(_ string)                                         {}
+func (m *mockPool) Invalidate(_ string, _ *finopsv1alpha1.TLSConfig, _ *metav1.Duration) {}
 
 var _ = Describe("IdleScaler Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -85,8 +96,9 @@ var _ = Describe("IdleScaler Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &IdleScalerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				ClientPool: &mockPool{},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
