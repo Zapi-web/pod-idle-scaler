@@ -19,94 +19,159 @@ package controller
 import (
 	"context"
 	"net/http"
+	"slices"
+	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	finopsv1alpha1 "github.com/zapi-web/pod-idle-scaler/api/v1alpha1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 )
 
-type mockPool struct{}
+type mockPool struct {
+	invalidatedNamespaces []string
+	getClientCalls        int
+	getClientErr          error
+}
 
 func (m *mockPool) GetClient(_ context.Context, _ string, _ *finopsv1alpha1.TLSConfig, _ *metav1.Duration) (*http.Client, error) {
+	m.getClientCalls++
+	if m.getClientErr != nil {
+		return nil, m.getClientErr
+	}
+
 	return &http.Client{Timeout: time.Second}, nil
 }
 
-func (m *mockPool) InvalidateNamespace(_ string)                                         {}
-func (m *mockPool) Invalidate(_ string, _ *finopsv1alpha1.TLSConfig, _ *metav1.Duration) {}
+func (m *mockPool) InvalidateNamespace(ns string) {
+	m.invalidatedNamespaces = append(m.invalidatedNamespaces, ns)
+}
+func (m *mockPool) Invalidate(string, *finopsv1alpha1.TLSConfig, *metav1.Duration) {}
 
-var _ = Describe("IdleScaler Controller", func() {
-	Context("When reconciling a resource", func() {
-		const (
-			resourceName      = "test-resource"
-			resourceNamespace = "default"
-		)
+func newTestScaler(name, namespace string, mutate func(*finopsv1alpha1.IdleScalerSpec)) *finopsv1alpha1.IdleScaler {
+	spec := &finopsv1alpha1.IdleScalerSpec{
+		ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+			Kind:       "Deployment",
+			Name:       "test-deployment",
+			APIVersion: "apps/v1",
+		},
+		Trigger: finopsv1alpha1.TriggerSpec{
+			Type: finopsv1alpha1.TriggerTypeHTTP,
+			HTTP: &finopsv1alpha1.HTTPTriggerSpec{
+				URL: "http://dummy-url.local",
+			},
+		},
+	}
 
-		ctx := context.Background()
+	if mutate != nil {
+		mutate(spec)
+	}
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
+	return &finopsv1alpha1.IdleScaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: *spec,
+	}
+}
+
+func cleanupScaler(t *testing.T, key types.NamespacedName) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resource := &finopsv1alpha1.IdleScaler{}
+	err := k8sClient.Get(ctx, key, resource)
+	if errors.IsNotFound(err) {
+		return
+	}
+	if err != nil {
+		t.Logf("cleanup: get failed: %v", err)
+		return
+	}
+
+	if controllerutil.RemoveFinalizer(resource, idleScalerFinalizer) {
+		if err := k8sClient.Update(ctx, resource); client.IgnoreNotFound(err) != nil {
+			t.Logf("cleanup: failed to detach finalizer")
 		}
-		idlescaler := &finopsv1alpha1.IdleScaler{}
+	}
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind IdleScaler")
-			err := k8sClient.Get(ctx, typeNamespacedName, idlescaler)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &finopsv1alpha1.IdleScaler{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					Spec: finopsv1alpha1.IdleScalerSpec{
-						ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
-							Kind:       "Deployment",
-							Name:       "test-deployment",
-							APIVersion: "apps/v1",
-						},
-						Trigger: finopsv1alpha1.TriggerSpec{
-							Type: finopsv1alpha1.TriggerTypeHTTP,
-							HTTP: &finopsv1alpha1.HTTPTriggerSpec{
-								URL: "http://dummy-url.local",
-							},
-						},
-					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
+	if err := k8sClient.Delete(ctx, resource); client.IgnoreNotFound(err) != nil {
+		t.Logf("cleanup: delete failed: %v", err)
+	}
+}
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &finopsv1alpha1.IdleScaler{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+func TestIdleScaler_Reconcile(t *testing.T) {
+	t.Run("existing resource - adds finalizier", func(t *testing.T) {
+		const (
+			name      = "test-resource"
+			namespace = "default"
+		)
+		key := types.NamespacedName{Name: name, Namespace: namespace}
 
-			By("Cleanup the specific resource instance IdleScaler")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &IdleScalerReconciler{
-				Client:     k8sClient,
-				Scheme:     k8sClient.Scheme(),
-				ClientPool: &mockPool{},
-			}
+		resource := newTestScaler(name, namespace, nil)
+		if err := k8sClient.Create(t.Context(), resource); err != nil {
+			t.Fatalf("failed to create resource: %v", err)
+		}
+		t.Cleanup(func() { cleanupScaler(t, key) })
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+		pool := &mockPool{}
+		r := &IdleScalerReconciler{
+			Client:     k8sClient,
+			Scheme:     k8sClient.Scheme(),
+			ClientPool: pool,
+		}
+
+		_, err := r.Reconcile(t.Context(), reconcile.Request{NamespacedName: key})
+		if err != nil {
+			t.Fatalf("failed to reconcile resource: %v", err)
+		}
+
+		if pool.getClientCalls != 1 {
+			t.Errorf("expected exactly 1 GetClient call, got %d", pool.getClientCalls)
+		}
+
+		got := &finopsv1alpha1.IdleScaler{}
+		if err := k8sClient.Get(t.Context(), key, got); err != nil {
+			t.Fatalf("failed to get resource: %v", err)
+		}
+		if !controllerutil.ContainsFinalizer(got, idleScalerFinalizer) {
+			t.Errorf("expected finalizer %q to be set", idleScalerFinalizer)
+		}
 	})
-})
+	t.Run("resource not found - invalidates namespace", func(t *testing.T) {
+		pool := &mockPool{}
+		r := &IdleScalerReconciler{
+			Client:     k8sClient,
+			Scheme:     k8sClient.Scheme(),
+			ClientPool: pool,
+		}
+
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "does-not-exist",
+				Namespace: "default",
+			},
+		}
+
+		_, err := r.Reconcile(t.Context(), req)
+		if err != nil {
+			t.Fatalf("Reconcile(): unexpected error: %v", err)
+		}
+
+		if pool.getClientCalls != 0 {
+			t.Errorf("Reconcile(): GetClient should not be called, got %d calls", pool.getClientCalls)
+		}
+		if !slices.Contains(pool.invalidatedNamespaces, "default") {
+			t.Errorf("Reconcile(): expected InvalidateNamespace(default), got %v", pool.invalidatedNamespaces)
+		}
+	})
+}
