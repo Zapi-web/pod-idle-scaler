@@ -1,0 +1,27 @@
+name: Main Pipeline
+
+on:
+    push:
+        branches: [ main ]
+        paths-ignore:
+            - README.md
+            - LICENSE
+    pull_request:
+        branches: [ main ]
+        paths-ignore:
+            - README.md
+            - LICENSE
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+    tests:
+        uses: ./.github/workflows/test.yml
+    
+    linting:
+        uses: ./.github/workflows/lint.yml
+
+    e2e-test:
+        uses: ./.github/workflows/test-e2e.yml
