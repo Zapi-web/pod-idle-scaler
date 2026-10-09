@@ -45,6 +45,25 @@ const metricsServiceName = "k8s-operator-controller-manager-metrics-service"
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "k8s-operator-metrics-binding"
 
+func kubectl(args ...string) (string, error) {
+	cmd := exec.Command("kubectl", args...)
+	return utils.Run(cmd)
+}
+
+func kubectlApplyFile(name string) error {
+	path := filepath.Join("test", "e2e", "manifests", name)
+	cmd := exec.Command("kubectl", "apply", "-f", path)
+	_, err := utils.Run(cmd)
+	return err
+}
+
+func kubectlDeleteFile(name string) error {
+	path := filepath.Join("test", "e2e", "manifests", name)
+	cmd := exec.Command("kubectl", "delete", "--ignore-not-found", "-f", path)
+	_, err := utils.Run(cmd)
+	return err
+}
+
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 
@@ -279,6 +298,72 @@ var _ = Describe("Manager", Ordered, func() {
 		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
 		//    strings.ToLower(<Kind>),
 		// ))
+
+		Context("IdleScaler", func() {
+			BeforeAll(func() {
+				By("deploying the trigger server")
+				Expect(kubectlApplyFile("trigger-server.yaml")).To(Succeed())
+
+				By("waiting for trigger server to be ready")
+				Eventually(func(g Gomega) {
+					out, err := kubectl("get", "deployment", "trigger-server",
+						"-n", namespace, "-o", "jsonpath={.status.readyReplicas}")
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(out).To(Equal("1"))
+				}, 2*time.Minute, 2*time.Second).Should(Succeed())
+			})
+
+			AfterAll(func() {
+				_ = kubectlDeleteFile("trigger-server.yaml")
+			})
+
+			AfterEach(func() {
+				_, _ = kubectl("delete", "idlescaler", "--all", "-n", namespace, "--ignore-not-found")
+				_ = kubectlDeleteFile("test-deployment.yaml")
+			})
+
+			It("scales down deployment when idle timeout is reached", func() {
+				By("creating a test deployment with 3 replicas")
+				Expect(kubectlApplyFile("test-deployment.yaml")).To(Succeed())
+
+				By("creating an IdleScaler with short idle timeout")
+				Expect(kubectlApplyFile("test-scaler.yaml")).To(Succeed())
+
+				By("waiting for the deployment to be scaled down to minimum")
+				Eventually(func(g Gomega) {
+					out, err := kubectl("get", "deployment", "e2e-test-app",
+						"-n", namespace, "-o", "jsonpath={.spec.replicas}")
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(out).To(Equal("1"))
+				}, 90*time.Second, 2*time.Second).Should(Succeed())
+
+				By("verifying the original replicas annotation was set")
+				out, err := kubectl("get", "deployment", "e2e-test-app",
+					"-n", namespace,
+					"-o", `jsonpath={.metadata.annotations.finops\.zapi-web\.github\.io/original-replicas}`)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(Equal("3"))
+
+				By("verifying IdleScaler is in Sleeping phase")
+				out, err = kubectl("get", "idlescaler", "e2e-test-scaler",
+					"-n", namespace, "-o", "jsonpath={.status.phase}")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(Equal("Sleeping"))
+			})
+
+			It("sets Error phase when trigger URL is unreachable", func() {
+				By("creating an IdleScaler pointing to an unreachable URL")
+				Expect(kubectlApplyFile("unreachable-scaler.yaml")).To(Succeed())
+
+				By("waiting for the operator to set Error phase")
+				Eventually(func(g Gomega) {
+					out, err := kubectl("get", "idlescaler", "e2e-unreachable-trigger",
+						"-n", namespace, "-o", "jsonpath={.status.phase}")
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(out).To(Equal("Error"))
+				}, 60*time.Second, 2*time.Second).Should(Succeed())
+			})
+		})
 	})
 })
 

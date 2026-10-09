@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trigger-server
+  namespace: k8s-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trigger-server
+  template:
+    metadata:
+      labels:
+        app: trigger-server
+    spec:
+      containers:
+      - name: nginx
+        image: nginxinc/nginx-unprivileged:alpine
+        ports:
+        - containerPort: 8080
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trigger-server
+  namespace: k8s-operator-system
+spec:
+  selector:
+    app: trigger-server
+  ports:
+  - port: 80
+    targetPort: 8080

@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-test-app
+  namespace: k8s-operator-system
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: e2e-test-app
+  template:
+    metadata:
+      labels:
+        app: e2e-test-app
+    spec:
+      containers:
+      - name: app
+        image: nginxinc/nginx-unprivileged:alpine
+        ports:
+        - containerPort: 8080
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
