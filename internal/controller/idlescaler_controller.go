@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	finopsv1alpha1 "github.com/zapi-web/pod-idle-scaler/api/v1alpha1"
+	"github.com/zapi-web/pod-idle-scaler/internal/metrics"
 	appsv1 "k8s.io/api/apps/v1"
 )
 
@@ -146,6 +147,17 @@ func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	active, err := trigger.IsActive(ctx, &scaler)
 
 	if err != nil {
+		targetName := scaler.Spec.ScaleTargetRef.Name
+		if targetName == "" {
+			targetName = scaler.Name
+		}
+
+		metrics.TriggerCheckErrorsTotal.WithLabelValues(
+			scaler.Namespace,
+			targetName,
+			string(scaler.Spec.Trigger.Type),
+		).Inc()
+
 		klogger.Error(err, "failed to check activity status")
 		r.setErrorPhase(ctx, &scaler)
 		return ctrl.Result{RequeueAfter: checkTimeout}, nil
@@ -194,6 +206,7 @@ func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	scaleMin := ptr.Deref(scaler.Spec.ScaleMinimum, 0)
 	klogger.Info("Idle timeout exceeded, scaling down deployment", "scaleMinimum", scaleMin)
+
 	if err := r.ScaleDown(ctx, &scaler); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -206,9 +219,27 @@ func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{RequeueAfter: checkTimeout}, nil
 }
 
-func (r *IdleScalerReconciler) ScaleUp(ctx context.Context, scaler *finopsv1alpha1.IdleScaler) error {
+func (r *IdleScalerReconciler) ScaleUp(ctx context.Context, scaler *finopsv1alpha1.IdleScaler) (err error) {
+	targetName := scaler.Spec.ScaleTargetRef.Name
+	if targetName == "" {
+		targetName = scaler.Name
+	}
+
+	var actionExecuted bool
+	defer func() {
+		if !actionExecuted {
+			return
+		}
+		if err != nil {
+			metrics.ScalingActionsTotal.WithLabelValues(scaler.Namespace, targetName, "scale_up", "error").Inc()
+		} else {
+			metrics.ScalingActionsTotal.WithLabelValues(scaler.Namespace, targetName, "scale_up", "success").Inc()
+		}
+	}()
+
 	deployment, err := getDeployment(ctx, scaler, r.Client)
 	if err != nil {
+		actionExecuted = true
 		return fmt.Errorf("failed to get target deployment: %w", err)
 	}
 
@@ -223,27 +254,47 @@ func (r *IdleScalerReconciler) ScaleUp(ctx context.Context, scaler *finopsv1alph
 	if !ok {
 		if ptr.Deref(deployment.Spec.Replicas, 0) <= scaleMin {
 			deployment.Spec.Replicas = new(max(scaleMin, 1))
+			actionExecuted = true
 			return r.Patch(ctx, deployment, client.MergeFrom(base))
 		}
 		return nil
 	}
-	originalReplicasInt, err := strconv.Atoi(originalReplicasStr)
-	if err != nil {
+
+	originalReplicasInt, parseErr := strconv.Atoi(originalReplicasStr)
+	if parseErr != nil {
 		klogger := logf.FromContext(ctx)
-		klogger.Error(err, "invalid original-replicas annotation, removing it",
-			"value", originalReplicasStr)
+		klogger.Error(parseErr, "invalid original-replicas annotation, resetting to fallback", "value", originalReplicasStr)
 		originalReplicasInt = max(int(scaleMin), 1)
 	}
 
 	deployment.Spec.Replicas = new(int32(originalReplicasInt))
 	delete(deployment.Annotations, originalReplicasAnnotation)
 
+	actionExecuted = true
 	return r.Patch(ctx, deployment, client.MergeFrom(base))
 }
 
-func (r *IdleScalerReconciler) ScaleDown(ctx context.Context, scaler *finopsv1alpha1.IdleScaler) error {
+func (r *IdleScalerReconciler) ScaleDown(ctx context.Context, scaler *finopsv1alpha1.IdleScaler) (err error) {
+	targetName := scaler.Spec.ScaleTargetRef.Name
+	if targetName == "" {
+		targetName = scaler.Name
+	}
+
+	var actionExecuted bool
+	defer func() {
+		if !actionExecuted {
+			return
+		}
+		if err != nil {
+			metrics.ScalingActionsTotal.WithLabelValues(scaler.Namespace, targetName, "scale_down", "error").Inc()
+		} else {
+			metrics.ScalingActionsTotal.WithLabelValues(scaler.Namespace, targetName, "scale_down", "success").Inc()
+		}
+	}()
+
 	deployment, err := getDeployment(ctx, scaler, r.Client)
 	if err != nil {
+		actionExecuted = true
 		return fmt.Errorf("failed to get target deployment: %w", err)
 	}
 
@@ -263,6 +314,7 @@ func (r *IdleScalerReconciler) ScaleDown(ctx context.Context, scaler *finopsv1al
 	}
 	deployment.Spec.Replicas = new(scaleMin)
 
+	actionExecuted = true
 	return r.Patch(ctx, deployment, client.MergeFrom(base))
 }
 
