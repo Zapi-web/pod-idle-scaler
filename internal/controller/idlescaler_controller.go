@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -75,6 +76,9 @@ const originalReplicasAnnotation = "finops.zapi-web.github.io/original-replicas"
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.25.0/pkg/reconcile
+//
+
+//nolint:gocyclo // the reconcile branches mirror the scaler lifecycle and are clearer inline
 func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	klogger := logf.FromContext(ctx)
 
@@ -126,21 +130,21 @@ func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	triggerSettings, err := getTriggerSettings(scaler.Spec)
 	if err != nil {
 		klogger.Error(err, "invalid trigger configuration")
-		r.setErrorPhase(ctx, &scaler)
+		r.setErrorPhase(ctx, &scaler, "InvalidTriggerConfig", fmt.Errorf("failed to get trigger settings from spec: %w", err))
 		return ctrl.Result{RequeueAfter: checkTimeout}, nil
 	}
 
 	httpClient, err := r.ClientPool.GetClient(ctx, req.Namespace, triggerSettings.TLSConfig, triggerSettings.Timeout)
 	if err != nil {
 		klogger.Error(err, "failed to get HTTP client")
-		r.setErrorPhase(ctx, &scaler)
+		r.setErrorPhase(ctx, &scaler, "InvalidTriggerConfig", fmt.Errorf("failed to get http client: %w", err))
 		return ctrl.Result{}, err
 	}
 
 	trigger, err := NewTrigger(r.Client, scaler.Spec.Trigger.Type, httpClient)
 	if err != nil {
 		klogger.Error(err, "failed to build trigger")
-		r.setErrorPhase(ctx, &scaler)
+		r.setErrorPhase(ctx, &scaler, "InvalidTriggerConfig", fmt.Errorf("failed to build new trigger: %w", err))
 		return ctrl.Result{RequeueAfter: checkTimeout}, nil
 	}
 
@@ -159,12 +163,14 @@ func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		).Inc()
 
 		klogger.Error(err, "failed to check activity status")
-		r.setErrorPhase(ctx, &scaler)
+		r.setErrorPhase(ctx, &scaler, "TriggerCheckFailed", fmt.Errorf("failed to check activity status: %w", err))
 		return ctrl.Result{RequeueAfter: checkTimeout}, nil
 	}
 
 	now := metav1.Now()
 	if active {
+		setCondition(&scaler, finopsv1alpha1.ConditionTypeReady, metav1.ConditionTrue, "TriggerCheckSucceeded", "")
+
 		if scaler.Status.Phase == finopsv1alpha1.PhaseSleeping {
 			klogger.Info("Activity detected, scaling up deployment")
 			if err := r.ScaleUp(ctx, &scaler); err != nil {
@@ -184,6 +190,8 @@ func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: checkTimeout}, nil
 	}
 
+	setCondition(&scaler, finopsv1alpha1.ConditionTypeReady, metav1.ConditionTrue, "TriggerCheckSucceeded", "")
+
 	if scaler.Status.LastActivityTime == nil {
 		scaler.Status.LastActivityTime = &now
 		scaler.Status.Phase = finopsv1alpha1.PhaseIdling
@@ -198,6 +206,10 @@ func (r *IdleScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		remaining := idleTimeout - elapsed
 		if scaler.Status.Phase != finopsv1alpha1.PhaseIdling {
 			scaler.Status.Phase = finopsv1alpha1.PhaseIdling
+			if err := r.Status().Update(ctx, &scaler); err != nil {
+				return ctrl.Result{}, err
+			}
+		} else if !meta.IsStatusConditionTrue(scaler.Status.Conditions, finopsv1alpha1.ConditionTypeReady) {
 			if err := r.Status().Update(ctx, &scaler); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -341,15 +353,23 @@ func getDeployment(ctx context.Context, scaler *finopsv1alpha1.IdleScaler, c cli
 	return deployment, nil
 }
 
-func (r *IdleScalerReconciler) setErrorPhase(ctx context.Context, scaler *finopsv1alpha1.IdleScaler) {
-	if scaler.Status.Phase == finopsv1alpha1.PhaseError {
-		return
-	}
+func (r *IdleScalerReconciler) setErrorPhase(ctx context.Context, scaler *finopsv1alpha1.IdleScaler, reason string, err error) {
+	setCondition(scaler, finopsv1alpha1.ConditionTypeReady, metav1.ConditionFalse, reason, err.Error())
 	klogger := logf.FromContext(ctx)
 	scaler.Status.Phase = finopsv1alpha1.PhaseError
 	if err := r.Status().Update(ctx, scaler); err != nil {
 		klogger.Error(err, "failed to update status to Error phase")
 	}
+}
+
+func setCondition(scaler *finopsv1alpha1.IdleScaler, condType string, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(&scaler.Status.Conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: scaler.Generation,
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.
