@@ -1,50 +1,51 @@
 # Pod-Idle-Scaler
-Operator that scales your deployment to your value of replics when it's not active
+**Operator** that automatically scales down idle Kubernetes Deployments to a specified replica count based on custom activity probes.
 
 [![Main Pipeline](https://github.com/Zapi-web/pod-idle-scaler/actions/workflows/main.yml/badge.svg)](https://github.com/Zapi-web/pod-idle-scaler/actions/workflows/main.yml)
 
 
 ## Description
-You need to specify trigger HTTP with: URL, status code, and regex (if you need) or with PromQL also with: URL and your query
 
-Under the Hood:
-Operator does reconsile loop, for `isActive` probe doesn't create new HTTP Clients and cache and use old ones from pool.
-Depens on active status, saves phase of deployment and when starts new iteration, looks on it, decides what it supposed to do
-Operator hook anotation to your deployment, when scales it down to remember original amount of replicas. And deletes it when scales up
+**Pod-Idle-Scaler** evaluates application activity using either **HTTP probes** or **PromQL queries** and scales down workloads when traffic ceases for a designated duration.
+
+### Under the Hood
+* **Operator** does reconcile loop, for `isActive` probe doesn't create new HTTP Clients and cache and use old ones from pool.
+* Depends on active status, saves phase of deployment and when starts new iteration, looks on it, decides what it supposed to do
+* **Operator** hooks annotation to your deployment, when scales it down to remember original amount of replicas. And deletes it when scales up
 
 ## customResourceDefinitions
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **scaleTargetRef** | object | - (required) | Reference on target deployment, kind should be Deployment |
-| **trigger** | object | - (required) | What trigger uses operator to understand (PromQL or HTTP) |
-| **idleTimeout** | duration | 15m | How much scaler will wait before change phate to sleeping and scale down |
-| **checkTimeout** | duration | 1m | How offen scaler need to check the target deployment |
-| **scaleMinimum** | int32 (>=0) | 1 | How much replicas we need after scaling down |
+| **scaleTargetRef** | object | - (required) | Reference to the target deployment, kind should be Deployment |
+| **trigger** | object | - (required) | Which trigger the operator uses to understand (PromQL or HTTP) |
+| **idleTimeout** | duration | 15m | How long the scaler will wait before changing phase to sleeping and scale down |
+| **checkTimeout** | duration | 1m | How often the scaler needs to check the target deployment |
+| **scaleMinimum** | int32 (>=0) | 1 | How many replicas we need after scaling down |
 
 **Trigger** uses type: **HTTP** or **PromQL** so you can connect your metrics from Prometheus/VictoriaMetrics to it.
 
-for trigger.http should be specified: url another fields like: method (POST,GET,HEAD), expect code (200), body pattern (regular expression), headers, tokenSecretRef (if you need specify secret token in headers), tlsConfig can be specified by default
+For ``trigger.http`` should be specified: url another fields like: method (POST,GET,HEAD), expect code (200), body pattern (regular expression), headers, tokenSecretRef (if you need to specify secret token in headers), tlsConfig can be specified by default
 
-**You can NOT specify two types one time, scaler will not be deployed**
+**You can NOT specify two types at the same time, scaler will not be deployed**
 
-for trigger.promql required only: url, and query another fields are almost simillar to http, but do not have regular expression, and have stresshold
+For ``trigger.promql`` required only: url, and query another fields are almost similar to http, but do not have regular expression, and have a threshold
 
 ## Scaler Phases
 
-**Active** - Deployment have load, so it will be not scaled down
-**Idling** - Target doesn't have any load, waiting for `idleTimeout`
-**Sleeping** - Target is scaled down to `scaleMinimum`
-**Error** - Scaler received an error, needs to be checked
+* **Active** - Deployment have load, so it will be not scaled down
+* **Idling** - Target doesn't have any load, waiting for `idleTimeout`
+* **Sleeping** - Target is scaled down to `scaleMinimum`
+* **Error** - Scaler received an error, needs to be checked
 
 ## Getting Started
 
 ### Prerequisites
-- go version v1.26.0+
-- docker v20.10+ (BuildKit is required for multi-arch builds)
-- kubectl v1.28+
-- Access to a Kubernetes v1.28+ cluster
-- kind v0.33.0+ — only needed for the e2e tests, which require an isolated cluster
+- **go** version v1.26.0+
+- **docker** v20.10+ (BuildKit is required for multi-arch builds)
+- **kubectl** v1.28+
+- Access to a **Kubernetes** v1.28+ cluster
+- **kind** v0.33.0+ — only needed for the e2e tests, which require an isolated cluster
 
 ### Install from a release
 
@@ -89,7 +90,7 @@ spec:
     name: my-api
   idleTimeout: 30s
   checkTimeout: 5s
-  scaleMinimum: 0
+  scaleMinimum: 1
   trigger:
     type: HTTP
     http:
@@ -104,7 +105,7 @@ as "no activity". After `idleTimeout` of that, the workload is scaled to `scaleM
 
 ```sh
 kubectl get idlescaler my-api-idler -w      # Active -> Idling -> Sleeping
-kubectl get deployment my-api               # replicas drop to 0
+kubectl get deployment my-api               # replicas drop to 1
 ```
 
 > **NOTE:** A trigger that *errors* (for example an unresolvable host or an unreachable
