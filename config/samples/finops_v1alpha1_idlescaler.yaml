@@ -1,9 +1,16 @@
 apiVersion: finops.zapi-web.github.io/v1alpha1
 kind: IdleScaler
 metadata:
-  labels:
-    app.kubernetes.io/name: k8s-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: idlescaler-sample
+  name: my-api-idler
 spec:
-  # TODO(user): Add fields here
+  scaleTargetRef:
+    kind: Deployment
+    name: my-api
+  idleTimeout: 15m
+  checkTimeout: 1m
+  scaleMinimum: 0
+  trigger:
+    type: HTTP
+    http:
+      url: https://my-api.example.com/healthz
+      expectedCode: 200
