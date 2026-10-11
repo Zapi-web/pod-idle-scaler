@@ -36,6 +36,13 @@ const (
 	PhaseError    IdleScalerPhase = "Error"
 )
 
+// Condition types reported in IdleScalerStatus.Conditions.
+const (
+	// ConditionTypeReady reports whether the scaler is currently able to evaluate
+	// its trigger. It is False while the scaler is in the Error phase.
+	ConditionTypeReady = "Ready"
+)
+
 // IdleScalerSpec defines the desired state of IdleScaler
 type IdleScalerSpec struct {
 	// Time before reduce
